@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>DoGoBlock Link</title>
+        <style>
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: #f6f8fb;
+                color: #1f2933;
+            }
+
+            main {
+                padding: 28px;
+            }
+
+            h1 {
+                margin: 0 0 8px;
+                font-size: 24px;
+            }
+
+            p {
+                line-height: 1.45;
+            }
+
+            .status {
+                margin: 24px 0;
+                padding: 16px;
+                border-radius: 8px;
+                background: #ffffff;
+                border: 1px solid #d8dee9;
+            }
+
+            .state {
+                font-weight: 700;
+                text-transform: uppercase;
+                font-size: 12px;
+                letter-spacing: 0.08em;
+            }
+
+            .state.running {
+                color: #0f7b3f;
+            }
+
+            .state.warning {
+                color: #9a5b00;
+            }
+
+            .state.error {
+                color: #b42318;
+            }
+
+            button {
+                border: 0;
+                border-radius: 6px;
+                padding: 10px 16px;
+                background: #4c97ff;
+                color: #ffffff;
+                font-weight: 700;
+                cursor: pointer;
+            }
+        </style>
+    </head>
+    <body>
+        <main>
+            <h1>DoGoBlock Link</h1>
+            <p>Keep this app open while using Arduino projects in the DoGoBlock web editor on Windows.</p>
+            <section class="status">
+                <div id="state" class="state">STARTING</div>
+                <p id="message">Starting DoGoBlock Link...</p>
+            </section>
+            <button id="quit">Quit</button>
+        </main>
+        <script>
+            const state = document.getElementById('state');
+            const message = document.getElementById('message');
+            const update = status => {
+                state.textContent = status.state;
+                state.className = `state ${status.state}`;
+                message.textContent = status.message;
+            };
+            window.dogoblockLink.getStatus().then(update);
+            window.dogoblockLink.onStatus(update);
+            document.getElementById('quit').addEventListener('click', () => {
+                window.dogoblockLink.quit();
+            });
+        </script>
+    </body>
+</html>

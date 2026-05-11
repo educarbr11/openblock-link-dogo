@@ -7,6 +7,8 @@
     "fetch": "rimraf tools firmwares && node script/download-tools.js && node script/download-firmwares.js",
     "start": "rimraf ../.openblockData/link && node test/start-server.js --log-level=info",
     "start:debug": "rimraf ../.openblockData/link && node test/start-server.js --log-level=debug",
+    "start:app": "electron electron/main.js",
+    "build:win": "npm run fetch && electron-builder --win nsis",
     "clean": "rimraf ../.openblockData/link tools firmwares",
     "docs": "jsdoc -c .jsdoc.json",
     "lint": "eslint ./src",
@@ -33,6 +35,49 @@
     "url": "https://github.com/openblockcc/openblock-link/issues"
   },
   "homepage": "https://github.com/openblockcc/openblock-link#readme",
+  "build": {
+    "appId": "br.com.dogoblock.link",
+    "productName": "DoGoBlock Link",
+    "artifactName": "DoGoBlock-Link-${version}-${arch}.${ext}",
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "tools",
+        "to": "tools",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "firmwares",
+        "to": "firmwares",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/serialport/**/*",
+      "node_modules/@serialport/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  },
   "dependencies": {
     "7zip-bin": "^5.2.0",
     "ansi-string": "^0.2.1",
@@ -50,6 +95,8 @@
   },
   "devDependencies": {
     "babel-eslint": "^10.0.1",
+    "electron": "^42.0.1",
+    "electron-builder": "^26.8.1",
     "eslint": "^5.3.0",
     "eslint-config-scratch": "^5.0.0",
     "jsdoc": "^3.6.6",
