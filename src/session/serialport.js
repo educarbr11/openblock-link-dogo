@@ -381,6 +381,30 @@ class SerialportSession extends Session {
                 });
             }
             break;
+        case 'microbit': {
+            const {baudRate} = this.peripheralParams.peripheralConfig.config;
+            this.tool = new Microbit(this.peripheral.path, params, this.userDataPath,
+                this.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
+            try {
+                this.sendRemoteRequest('setUploadAbortEnabled', true);
+                this.sendstd(`${ansi.clear}Disconnect serial port\n`);
+                await this.disconnect();
+                this.sendstd(`${ansi.clear}Disconnected successfully, flash program starting...\n`);
+                const flashExitCode = await this.tool.flashRealtimeFirmware();
+                await this.connect(this.peripheralParams, true);
+                await this.updateBaudrate({baudRate: 115200});
+                this.sendstd(`${ansi.clear}Reset device\n`);
+                await this.write({message: '04', encoding: 'hex'});
+                await this.updateBaudrate({baudRate: baudRate});
+                this.sendRemoteRequest('uploadSuccess', {aborted: flashExitCode === 'Aborted'});
+            } catch (err) {
+                this.sendRemoteRequest('uploadError', {
+                    message: ansi.red + err.message
+                });
+                this.sendRemoteRequest('peripheralUnplug', null);
+            }
+            break;
+        }
         }
 
         this.tool = null;

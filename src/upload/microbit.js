@@ -10,6 +10,175 @@ const ABORT_STATE_CHECK_INTERVAL = 100;
 
 const UFLASH_MODULE_NAME = 'uflash';
 const MICROFS_MODULE_NAME = 'microfs';
+const REALTIME_FIRMWARE = `
+from microbit import *
+
+uart.init(baudrate=115200)
+
+VERSION = 'microbit-realtime-v2'
+
+PINS = {
+    '0': pin0,
+    '1': pin1,
+    '2': pin2,
+    '3': pin3,
+    '4': pin4,
+    '5': pin5,
+    '6': pin6,
+    '7': pin7,
+    '8': pin8,
+    '9': pin9,
+    '10': pin10,
+    '11': pin11,
+    '12': pin12,
+    '13': pin13,
+    '14': pin14,
+    '15': pin15,
+    '16': pin16
+}
+
+
+def _ok(value=1):
+    uart.write('OK {}\\n'.format(value))
+
+
+def _err(code):
+    uart.write('ERR {}\\n'.format(code))
+
+
+def _pin(name):
+    if name in PINS:
+        return PINS[name]
+    _err('pin')
+    return None
+
+
+def _clamp(value, minimum, maximum):
+    value = int(value)
+    if value < minimum:
+        return minimum
+    if value > maximum:
+        return maximum
+    return value
+
+
+def _safe_button(button):
+    try:
+        return 1 if button.is_pressed() else 0
+    except Exception:
+        return 0
+
+
+def _safe_touch(pin):
+    try:
+        return 1 if pin.is_touched() else 0
+    except Exception:
+        return 0
+
+
+def _gesture_name():
+    try:
+        return accelerometer.current_gesture().replace(' ', '')
+    except Exception:
+        return ''
+
+
+def _handle(line):
+    parts = line.split()
+    if len(parts) == 0:
+        return
+
+    cmd = parts[0]
+
+    if cmd == 'PING':
+        _ok(1)
+    elif cmd == 'VER':
+        _ok(VERSION)
+    elif cmd == 'DREAD' and len(parts) == 2:
+        pin = _pin(parts[1])
+        if pin is not None:
+            _ok(pin.read_digital())
+    elif cmd == 'AREAD' and len(parts) == 2:
+        pin = _pin(parts[1])
+        if pin is not None:
+            _ok(pin.read_analog())
+    elif cmd == 'DWRITE' and len(parts) == 3:
+        pin = _pin(parts[1])
+        if pin is not None:
+            pin.write_digital(_clamp(parts[2], 0, 1))
+            _ok(1)
+    elif cmd == 'PWM' and len(parts) == 3:
+        pin = _pin(parts[1])
+        if pin is not None:
+            pin.write_analog(_clamp(parts[2], 0, 1023))
+            _ok(1)
+    elif cmd == 'TOUCH' and len(parts) == 2:
+        pin = _pin(parts[1])
+        if pin is not None:
+            _ok(_safe_touch(pin))
+    elif cmd == 'BTN' and len(parts) == 2:
+        key = parts[1].upper()
+        if key == 'A':
+            _ok(_safe_button(button_a))
+        elif key == 'B':
+            _ok(_safe_button(button_b))
+        else:
+            _err('button')
+    elif cmd == 'POLL':
+        a = _safe_button(button_a)
+        b = _safe_button(button_b)
+        ab = 1 if a and b else 0
+        t0 = _safe_touch(pin0)
+        t1 = _safe_touch(pin1)
+        t2 = _safe_touch(pin2)
+        _ok('{},{},{},{},{},{},{}'.format(a, b, ab, t0, t1, t2, _gesture_name()))
+    elif cmd == 'GEST' and len(parts) == 2:
+        _ok(1 if _gesture_name() == parts[1].lower() else 0)
+    elif cmd == 'ACC' and len(parts) == 2:
+        axis = parts[1].upper()
+        if axis == 'X':
+            _ok(accelerometer.get_x())
+        elif axis == 'Y':
+            _ok(accelerometer.get_y())
+        elif axis == 'Z':
+            _ok(accelerometer.get_z())
+        else:
+            _err('axis')
+    elif cmd == 'LIGHT':
+        _ok(display.read_light_level())
+    elif cmd == 'TEMP':
+        _ok(temperature())
+    elif cmd == 'TIME':
+        _ok(running_time())
+    elif cmd == 'IMG' and len(parts) == 2:
+        value = parts[1]
+        if len(value) != 25:
+            _err('image')
+            return
+        rows = []
+        for row in range(5):
+            row_value = ''
+            for col in range(5):
+                row_value = row_value + ('9' if value[row * 5 + col] == '1' else '0')
+            rows.append(row_value)
+        display.show(Image(':'.join(rows)))
+        _ok(1)
+    elif cmd == 'CLEAR':
+        display.clear()
+        _ok(1)
+    else:
+        _err('cmd')
+
+
+while True:
+    try:
+        data = uart.readline()
+        if data:
+            _handle(data.decode('utf-8').strip())
+    except Exception:
+        _err('bad')
+    sleep(10)
+`;
 
 class Microbit {
     constructor (peripheralPath, config, userDataPath, toolsPath, sendstd, sendRemoteRequest) {
@@ -90,6 +259,17 @@ class Microbit {
         }
         this._sendstd(`${ansi.green_dark}Success\n`);
         return Promise.resolve('Success');
+    }
+
+    async flashRealtimeFirmware () {
+        const library = this._config.library;
+        this._config.library = [];
+        try {
+            this._sendstd('Writing microbit realtime firmware...\n');
+            return await this.flash(REALTIME_FIRMWARE);
+        } finally {
+            this._config.library = library;
+        }
     }
 
     ufsTestFirmware () {
