@@ -65,7 +65,10 @@
     ],
     "asarUnpack": [
       "node_modules/serialport/**/*",
-      "node_modules/@serialport/**/*"
+      "node_modules/@serialport/**/*",
+      "node_modules/@abandonware/**/*",
+      "node_modules/@mapbox/node-pre-gyp/**/*",
+      "node_modules/usb/**/*"
     ],
     "win": {
       "target": [
@@ -79,10 +82,13 @@
     }
   },
   "dependencies": {
+    "@abandonware/noble": "^1.9.2-25",
     "7zip-bin": "^5.2.0",
+    "adm-zip": "^0.5.17",
     "ansi-string": "^0.2.1",
     "axios": "^1.9.0",
     "cli-color": "^2.0.1",
+    "dbus-next": "^0.10.2",
     "download-github-release": "^0.3.2",
     "https": "^1.0.0",
     "install": "^0.13.0",

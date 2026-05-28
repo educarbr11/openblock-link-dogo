@@ -47,7 +47,8 @@ const REOPEN_INTERVAL = 1000 * 1;
  * @readonly
  */
 const ROUTERS = {
-    '/openblock/serialport': require('./session/serialport') // eslint-disable-line global-require
+    '/openblock/serialport': require('./session/serialport'), // eslint-disable-line global-require
+    '/openblock/ble': require('./session/ble') // eslint-disable-line global-require
 };
 
 /**
