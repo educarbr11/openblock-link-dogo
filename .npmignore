@@ -12,6 +12,7 @@
 /coverage
 
 # Exclude tools
+/dist
 /tools
 /firmwares
 /tmp

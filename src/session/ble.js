@@ -508,7 +508,12 @@ class BLESession extends Session {
     }
 
     _bluezDeviceFromProps (path, props) {
-        const prop = name => props[name] ? props[name].value : null;
+        const prop = name => {
+            if (props[name]) {
+                return props[name].value;
+            }
+            return null;
+        };
         const address = prop('Address');
         const alias = prop('Alias');
         const name = prop('Name') || alias || address || path;

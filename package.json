@@ -1,6 +1,6 @@
 {
   "name": "openblock-link",
-  "version": "0.2.0",
+  "version": "0.2.0-prerelease.20260529165431",
   "description": "Porvide local hardware function to openblock",
   "main": "src/index.js",
   "scripts": {
@@ -12,7 +12,7 @@
     "clean": "rimraf ../.openblockData/link tools firmwares",
     "docs": "jsdoc -c .jsdoc.json",
     "lint": "eslint ./src",
-    "test": "",
+    "test": "node test/ble-session.test.js",
     "test:multi-server": "node test/start-multi-server.js --log-level=info"
   },
   "repository": {
@@ -82,7 +82,7 @@
     }
   },
   "dependencies": {
-    "@abandonware/noble": "^1.9.2-25",
+    "@abandonware/noble": "1.9.2-25",
     "7zip-bin": "^5.2.0",
     "adm-zip": "^0.5.17",
     "ansi-string": "^0.2.1",
