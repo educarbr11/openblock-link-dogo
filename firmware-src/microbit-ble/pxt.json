@@ -1,0 +1,29 @@
+{
+  "name": "dogoblock-microbit-ble",
+  "version": "0.1.0",
+  "description": "Dogoblock micro:bit BLE v1 firmware compatible with Scratch BLE plus digital pin writes.",
+  "dependencies": {
+    "core": "*",
+    "bluetooth": "*"
+  },
+  "yotta": {
+    "config": {
+      "microbit-dal": {
+        "bluetooth": {
+          "open": 1,
+          "pairing_mode": 0,
+          "whitelist": 0,
+          "security_level": null,
+          "advertising_timeout": 0
+        }
+      }
+    }
+  },
+  "files": [
+    "main.ts",
+    "dogoblockble.ts",
+    "DogoblockScratchService.h",
+    "DogoblockScratchService.cpp"
+  ],
+  "preferredEditor": "tsprj"
+}

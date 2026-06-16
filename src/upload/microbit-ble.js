@@ -7,6 +7,10 @@ const ansi = require('ansi-string');
 
 const SCRATCH_MICROBIT_HEX_ZIP =
     'https://downloads.scratch.mit.edu/microbit/scratch-microbit.hex.zip';
+const DOGOBLOCK_MICROBIT_HEX_NAMES = {
+    v1: 'dogoblock-microbit-ble.hex',
+    v2: 'dogoblock-microbit-ble-v2.hex'
+};
 
 class MicrobitBleFirmware {
     constructor (userDataPath, sendstd) {
@@ -18,24 +22,82 @@ class MicrobitBleFirmware {
 
     async flashScratchBleFirmware () {
         fs.mkdirSync(this._cachePath, {recursive: true});
-        await this._ensureHex();
         const volume = this._findMicrobitVolume();
         if (!volume) {
             throw new Error('MICROBIT volume not found. Connect the micro:bit by USB and try again.');
         }
 
-        this._sendstd(`${ansi.clear}Writing Scratch micro:bit Bluetooth firmware to ${volume}\n`);
-        fs.copyFileSync(this._hexPath, path.join(volume, 'scratch-microbit.hex'));
+        const firmware = await this._ensureHex(volume);
+        this._sendstd(`${ansi.clear}Writing ${firmware.name} to ${volume}\n`);
+        fs.copyFileSync(firmware.path, path.join(volume, firmware.name));
         this._sendstd(`${ansi.clear}Firmware copied. Wait for the micro:bit to restart ` +
             `before connecting by Bluetooth.\n`);
         return 'Success';
     }
 
-    async _ensureHex () {
+    async _ensureHex (volume) {
+        const microbitVersion = this._detectMicrobitVersion(volume);
+        const dogoblockHexPath = this._findDogoblockHex(microbitVersion);
+        if (dogoblockHexPath) {
+            const firmwareName = DOGOBLOCK_MICROBIT_HEX_NAMES[microbitVersion];
+            return {
+                name: firmwareName,
+                path: dogoblockHexPath
+            };
+        }
+
+        this._sendstd(`${ansi.clear}Dogoblock micro:bit BLE firmware for ${microbitVersion} not found. ` +
+            `Falling back to Scratch firmware; digital pin write blocks require Dogoblock firmware.\n`);
         if (!fs.existsSync(this._hexPath)) {
             await this._downloadZip();
             this._extractHex();
         }
+        return {
+            name: 'scratch-microbit.hex',
+            path: this._hexPath
+        };
+    }
+
+    _findDogoblockHex (microbitVersion) {
+        const firmwareName = DOGOBLOCK_MICROBIT_HEX_NAMES[microbitVersion] ||
+            DOGOBLOCK_MICROBIT_HEX_NAMES.v1;
+        const versionEnvVar = microbitVersion === 'v2' ?
+            process.env.DOGOBLOCK_MICROBIT_BLE_HEX_V2 :
+            process.env.DOGOBLOCK_MICROBIT_BLE_HEX_V1;
+        const candidates = this._dedupe([
+            versionEnvVar,
+            process.env.DOGOBLOCK_MICROBIT_BLE_HEX,
+            process.resourcesPath && path.join(
+                process.resourcesPath,
+                'firmwares',
+                'microbit',
+                firmwareName
+            ),
+            path.resolve(__dirname, '..', '..', 'firmwares', 'microbit', firmwareName)
+        ].filter(Boolean));
+
+        return candidates.find(candidate => fs.existsSync(candidate));
+    }
+
+    _detectMicrobitVersion (volume) {
+        const detailsPath = path.join(volume, 'DETAILS.TXT');
+        if (!fs.existsSync(detailsPath)) {
+            return 'v1';
+        }
+
+        try {
+            const details = fs.readFileSync(detailsPath, 'utf8');
+            if (/micro:bit\s*v2/i.test(details) ||
+                /\bboard\s*id\s*:\s*9904\b/i.test(details) ||
+                /\bboard-id\s*:\s*9904\b/i.test(details) ||
+                /\b9904\b/.test(details)) {
+                return 'v2';
+            }
+        } catch (err) {
+            // Keep firmware upload working if DETAILS.TXT is unreadable.
+        }
+
+        return 'v1';
     }
 
     async _downloadZip () {

@@ -6,6 +6,10 @@ node_modules/
 
 # Binary tools
 tools/
-firmwares/
+firmwares/*
+!firmwares/microbit/
+firmwares/microbit/*
+!firmwares/microbit/dogoblock-microbit-ble.hex
+!firmwares/microbit/dogoblock-microbit-ble-v2.hex
 tmp/
 dist/
