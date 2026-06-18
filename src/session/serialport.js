@@ -8,6 +8,14 @@ const usbId = require('../lib/usb-id');
 
 const PERIPHERAL_UNPLUG_CHECK_INTERVAL = 100;
 
+const isUnsupportedControlSignalError = err => {
+    if (!err) return false;
+    const message = String(err.message || err);
+    return message.includes('Operation not supported') ||
+        message.includes('cannot set') ||
+        message.includes('Inappropriate ioctl');
+};
+
 class SerialportSession extends Session {
     constructor (socket, userDataPath, toolsPath) {
         super(socket);
@@ -160,14 +168,7 @@ class SerialportSession extends Session {
                         return reject(new Error(openErr));
                     }
 
-                    port.set({rts: rts, dtr: dtr}, setErr => {
-                        if (setErr) {
-                            if (isConnectAfterUpload === true) {
-                                this.sendRemoteRequest('peripheralUnplug', null);
-                            }
-                            return reject(new Error(setErr));
-                        }
-
+                    const finishConnection = () => {
                         this.peripheral = port;
                         this.peripheralParams = params;
 
@@ -193,6 +194,22 @@ class SerialportSession extends Session {
                         });
 
                         resolve();
+                    };
+
+                    port.set({rts: rts, dtr: dtr}, setErr => {
+                        if (setErr) {
+                            if (isUnsupportedControlSignalError(setErr)) {
+                                console.warn(`OpenBlock Link Warning: serial control signals are not supported on ${peripheral.path}: ${setErr.message || setErr}`);
+                                return finishConnection();
+                            }
+                            if (isConnectAfterUpload === true) {
+                                this.sendRemoteRequest('peripheralUnplug', null);
+                            }
+                            port.close(() => reject(new Error(setErr)));
+                            return;
+                        }
+
+                        finishConnection();
                     });
                 });
             } catch (err) {
@@ -231,6 +248,10 @@ class SerialportSession extends Session {
                 // we have to set them again.
                 this.peripheral.set({rts: rts, dtr: dtr}, setErr => {
                     if (setErr) {
+                        if (isUnsupportedControlSignalError(setErr)) {
+                            console.warn(`OpenBlock Link Warning: serial control signals are not supported after baudrate update: ${setErr.message || setErr}`);
+                            return resolve();
+                        }
                         this.sendRemoteRequest('peripheralUnplug', null);
                         return reject(new Error(setErr));
                     }
