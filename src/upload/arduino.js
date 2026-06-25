@@ -168,10 +168,18 @@ class Arduino {
         return soure.slice(0, start) + newStr + soure.slice(start);
     }
 
-    async flash (firmwarePath = null) {
+    _getUploadFqbns () {
+        const fallbackFqbns = Array.isArray(this._config.uploadFallbackFqbns) ?
+            this._config.uploadFallbackFqbns : [];
+        return [this._config.fqbn].concat(fallbackFqbns).filter((fqbn, index, fqbns) =>
+            fqbn && fqbns.indexOf(fqbn) === index
+        );
+    }
+
+    _flashWithFqbn (fqbn, firmwarePath = null) {
         const args = [
             'upload',
-            '--fqbn', this._config.fqbn,
+            '--fqbn', fqbn,
             '--verbose',
             '--verify',
             '--config-file', this._configFilePath,
@@ -179,7 +187,7 @@ class Arduino {
         ];
 
         // for k210 we must specify the programmer used as kflash
-        if (this._config.fqbn.startsWith('Maixduino:k210:')) {
+        if (fqbn.startsWith('Maixduino:k210:')) {
             args.push('-Pkflash');
         }
 
@@ -251,6 +259,29 @@ class Arduino {
                 }
             });
         });
+    }
+
+    async flash (firmwarePath = null) {
+        const fqbns = this._getUploadFqbns();
+        let lastError = null;
+
+        for (let i = 0; i < fqbns.length; i++) {
+            const fqbn = fqbns[i];
+            if (i > 0) {
+                this._sendstd(`${ansi.yellow_dark}Upload failed. Trying alternate Arduino bootloader (${fqbn})...\n`);
+            }
+
+            try {
+                return await this._flashWithFqbn(fqbn, firmwarePath);
+            } catch (err) {
+                lastError = err;
+                if (this._abort || i === fqbns.length - 1) {
+                    throw err;
+                }
+            }
+        }
+
+        throw lastError || new Error('avrdude failed to flash');
     }
 
     flashRealtimeFirmware () {
