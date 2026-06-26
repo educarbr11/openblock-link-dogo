@@ -42,7 +42,9 @@ class Arduino {
         this._buildPath = path.join(this._projectFilePath, 'build');
         this._buildCachePath = path.join(this._projectFilePath, 'buildCache');
 
-        this.initArduinoCli();
+        if (fs.existsSync(this._arduinoCliPath)) {
+            this.initArduinoCli();
+        }
     }
 
     initArduinoCli () {
@@ -176,6 +178,112 @@ class Arduino {
         );
     }
 
+    _getAvrdudePaths () {
+        const candidateRoots = [
+            path.join(this._arduinoPath, '..', 'avrdude'),
+            path.join(this._arduinoPath, 'packages', 'arduino', 'tools', 'avrdude', '6.3.0-arduino17')
+        ];
+        for (const root of candidateRoots) {
+            const bin = path.join(root, 'bin', os.platform() === 'win32' ? 'avrdude.exe' : 'avrdude');
+            const conf = path.join(root, 'etc', 'avrdude.conf');
+            if (fs.existsSync(bin) && fs.existsSync(conf)) {
+                return {bin, conf};
+            }
+        }
+        throw new Error('avrdude nao encontrado no Dogoblock Agent.');
+    }
+
+    _getAvrdudeUploadConfig (fqbn) {
+        const configs = {
+            'arduino:avr:uno': {
+                part: 'atmega328p',
+                programmer: 'arduino',
+                baud: 115200
+            },
+            'arduino:avr:nano': {
+                part: 'atmega328p',
+                programmer: 'arduino',
+                baud: 115200
+            },
+            'arduino:avr:nano:cpu=atmega328old': {
+                part: 'atmega328p',
+                programmer: 'arduino',
+                baud: 57600
+            },
+            'arduino:avr:leonardo': {
+                part: 'atmega32u4',
+                programmer: 'avr109',
+                baud: 57600
+            }
+        };
+        if (!configs[fqbn]) {
+            throw new Error(`Upload direto nao suporta a placa ${fqbn}.`);
+        }
+        return configs[fqbn];
+    }
+
+    _flashHexWithAvrdude (fqbn, firmwarePath) {
+        const avrdude = this._getAvrdudePaths();
+        const uploadConfig = this._getAvrdudeUploadConfig(fqbn);
+        const args = [
+            `-C${avrdude.conf}`,
+            '-v',
+            `-p${uploadConfig.part}`,
+            `-c${uploadConfig.programmer}`,
+            `-P${this._peripheralPath}`,
+            `-b${uploadConfig.baud}`,
+            '-D',
+            `-Uflash:w:${firmwarePath}:i`
+        ];
+
+        return new Promise((resolve, reject) => {
+            const avrdudeProcess = spawn(avrdude.bin, args);
+            this._sendstd(`${ansi.clear}${avrdude.bin} ${args.join(' ')}\n`);
+
+            avrdudeProcess.stderr.on('data', buf => {
+                let data = buf.toString();
+                if (data.search(ARDUINO_CLI_STDOUT_GREEN_START) !== -1) {
+                    data = this._insertStr(data, data.search(ARDUINO_CLI_STDOUT_GREEN_START), ansi.green_dark);
+                }
+                if (data.search(ARDUINO_CLI_STDOUT_GREEN_END) !== -1) {
+                    data = this._insertStr(data, data.search(ARDUINO_CLI_STDOUT_GREEN_END) + 1, ansi.clear);
+                }
+                if (data.search(ARDUINO_CLI_STDOUT_WHITE) !== -1) {
+                    data = this._insertStr(data, data.search(ARDUINO_CLI_STDOUT_WHITE), ansi.clear);
+                }
+                if (data.search(ARDUINO_CLI_STDOUT_RED_START) !== -1) {
+                    data = this._insertStr(data, data.search(ARDUINO_CLI_STDOUT_RED_START), ansi.red);
+                }
+                this._sendstd(data);
+            });
+
+            avrdudeProcess.stdout.on('data', buf => {
+                this._sendstd(buf.toString());
+            });
+
+            const listenAbortSignal = setInterval(() => {
+                if (this._abort) {
+                    if (os.platform() === 'win32') {
+                        spawnSync('taskkill', ['/pid', avrdudeProcess.pid, '/f', '/t']);
+                    } else {
+                        avrdudeProcess.kill();
+                    }
+                }
+            }, ABORT_STATE_CHECK_INTERVAL);
+
+            avrdudeProcess.on('exit', code => {
+                clearInterval(listenAbortSignal);
+                if (code === 0) {
+                    return resolve('Success');
+                }
+                if (this._abort) {
+                    return resolve('Aborted');
+                }
+                return reject(new Error('avrdude failed to flash'));
+            });
+        });
+    }
+
     _flashWithFqbn (fqbn, firmwarePath = null) {
         const args = [
             'upload',
@@ -273,6 +381,29 @@ class Arduino {
 
             try {
                 return await this._flashWithFqbn(fqbn, firmwarePath);
+            } catch (err) {
+                lastError = err;
+                if (this._abort || i === fqbns.length - 1) {
+                    throw err;
+                }
+            }
+        }
+
+        throw lastError || new Error('avrdude failed to flash');
+    }
+
+    async flashArtifact (firmwarePath) {
+        const fqbns = this._getUploadFqbns();
+        let lastError = null;
+
+        for (let i = 0; i < fqbns.length; i++) {
+            const fqbn = fqbns[i];
+            if (i > 0) {
+                this._sendstd(`${ansi.yellow_dark}Upload failed. Trying alternate Arduino bootloader (${fqbn})...\n`);
+            }
+
+            try {
+                return await this._flashHexWithAvrdude(fqbn, firmwarePath);
             } catch (err) {
                 lastError = err;
                 if (this._abort || i === fqbns.length - 1) {

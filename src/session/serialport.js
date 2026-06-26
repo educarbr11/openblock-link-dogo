@@ -1,5 +1,7 @@
 const {SerialPort} = require('serialport');
 const ansi = require('ansi-string');
+const fs = require('fs');
+const path = require('path');
 
 const Session = require('./session');
 const Arduino = require('../upload/arduino');
@@ -320,7 +322,7 @@ class SerialportSession extends Session {
     }
 
     async upload (params) {
-        const {message, config, encoding} = params;
+        const {message, config, encoding, uploadOptions} = params;
         const code = new Buffer.from(message, encoding).toString();
 
         const {baudRate} = this.peripheralParams.peripheralConfig.config;
@@ -332,6 +334,25 @@ class SerialportSession extends Session {
 
             try {
                 this.sendRemoteRequest('setUploadAbortEnabled', true);
+                if (uploadOptions && uploadOptions.artifactType === 'compiledArtifact') {
+                    const artifactDir = path.join(this.userDataPath, 'arduino', 'artifacts');
+                    fs.mkdirSync(artifactDir, {recursive: true});
+                    const artifactPath = path.join(artifactDir, `${Date.now()}-${config.fqbn.replace(/[^a-z0-9]/gi, '_')}.hex`);
+                    fs.writeFileSync(artifactPath, code);
+
+                    try {
+                        this.sendstd(`${ansi.clear}Disconnect serial port\n`);
+                        await this.disconnect();
+                        this.sendstd(`${ansi.clear}Disconnected successfully, flash program starting...\n`);
+                        const flashExitCode = await this.tool.flashArtifact(artifactPath);
+                        await this.connect(this.peripheralParams, true);
+                        this.sendRemoteRequest('uploadSuccess', {aborted: flashExitCode === 'Aborted'});
+                    } finally {
+                        fs.rmSync(artifactPath, {force: true});
+                    }
+                    break;
+                }
+
                 const exitCode = await this.tool.build(code);
                 if (exitCode === 'Success') {
                     try {

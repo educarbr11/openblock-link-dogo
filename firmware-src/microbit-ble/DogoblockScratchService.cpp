@@ -53,7 +53,7 @@ DogoblockScratchService::DogoblockScratchService()
 }
 
 void DogoblockScratchService::notifySensorPacket(const uint8_t *data, int len) {
-    if (!getConnected() || data == NULL) return;
+    if (data == NULL) return;
     if (len > DOGOBLOCK_SENSOR_PACKET_LENGTH) len = DOGOBLOCK_SENSOR_PACKET_LENGTH;
     if (len < 0) return;
     memset(sensorPacket, 0, sizeof(sensorPacket));

@@ -58,5 +58,5 @@ basic.forever(function () {
     packet.setNumber(NumberFormat.UInt8BE, 8, pinState(2, TouchPin.P2))
     packet.setNumber(NumberFormat.UInt8BE, 9, gestureState())
     dogoblockble.notifySensorPacket(packet)
-    basic.pause(50)
+    basic.pause(100)
 })
