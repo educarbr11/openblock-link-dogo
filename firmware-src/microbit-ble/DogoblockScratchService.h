@@ -4,7 +4,7 @@
 #include "MicroBitConfig.h"
 #include "pxt.h"
 
-#define DOGOBLOCK_SENSOR_PACKET_LENGTH 10
+#define DOGOBLOCK_SENSOR_PACKET_LENGTH 20
 #define DOGOBLOCK_MAX_COMMAND_LENGTH 20
 
 extern const uint8_t DogoblockRxCharacteristicUUID[];
@@ -22,12 +22,14 @@ class DogoblockScratchService : public MicroBitBLEService
     void notifySensorPacket(const uint8_t *data, int len);
     void onDataWritten(const microbit_ble_evt_write_t *params);
     int getPinOutputValue(int pin);
+    int getExtendedTelemetryEnabled();
 
   private:
     uint8_t sensorPacket[DOGOBLOCK_SENSOR_PACKET_LENGTH];
     uint8_t commandBuffer[DOGOBLOCK_MAX_COMMAND_LENGTH];
     uint8_t pinOutputEnabled[3];
     uint8_t pinOutputValue[3];
+    uint8_t extendedTelemetryEnabled;
 
     typedef enum mbbs_cIdx
     {
@@ -43,6 +45,8 @@ class DogoblockScratchService : public MicroBitBLEService
 
     void handleCommand(const uint8_t *data, int len);
     void handlePinWrite(const uint8_t *data, int len);
+    void handlePwmWrite(const uint8_t *data, int len);
+    void handleExtendedTelemetry(const uint8_t *data, int len);
     void handleDisplayText(const uint8_t *data, int len);
     void handleDisplayLed(const uint8_t *data, int len);
 
@@ -61,6 +65,7 @@ class DogoblockScratchService
     DogoblockScratchService(BLEDevice &_ble);
     void notifySensorPacket(const uint8_t *data, int len);
     int getPinOutputValue(int pin);
+    int getExtendedTelemetryEnabled();
 
   private:
     BLEDevice &ble;
@@ -68,12 +73,15 @@ class DogoblockScratchService
     uint8_t commandBuffer[DOGOBLOCK_MAX_COMMAND_LENGTH];
     uint8_t pinOutputEnabled[3];
     uint8_t pinOutputValue[3];
+    uint8_t extendedTelemetryEnabled;
     GattAttribute::Handle_t rxCharacteristicHandle;
     GattAttribute::Handle_t txCharacteristicHandle;
 
     void onDataWritten(const GattWriteCallbackParams *params);
     void handleCommand(const uint8_t *data, int len);
     void handlePinWrite(const uint8_t *data, int len);
+    void handlePwmWrite(const uint8_t *data, int len);
+    void handleExtendedTelemetry(const uint8_t *data, int len);
     void handleDisplayText(const uint8_t *data, int len);
     void handleDisplayLed(const uint8_t *data, int len);
 };

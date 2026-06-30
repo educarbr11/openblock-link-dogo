@@ -13,4 +13,9 @@ namespace dogoblockble {
     export function getPinOutputValue(pin: number): number {
         return -1
     }
+
+    //% shim=dogoblockble::getExtendedTelemetryEnabled
+    export function getExtendedTelemetryEnabled(): number {
+        return 0
+    }
 }

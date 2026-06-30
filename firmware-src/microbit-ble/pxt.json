@@ -1,7 +1,7 @@
 {
   "name": "dogoblock-microbit-ble",
   "version": "0.1.0",
-  "description": "Dogoblock micro:bit BLE v1 firmware compatible with Scratch BLE plus digital pin writes.",
+  "description": "Dogoblock micro:bit BLE firmware compatible with Scratch BLE plus digital pin writes, PWM and extended telemetry.",
   "dependencies": {
     "core": "*",
     "bluetooth": "*"

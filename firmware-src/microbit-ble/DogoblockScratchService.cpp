@@ -29,6 +29,7 @@ DogoblockScratchService::DogoblockScratchService()
     memset(commandBuffer, 0, sizeof(commandBuffer));
     memset(pinOutputEnabled, 0, sizeof(pinOutputEnabled));
     memset(pinOutputValue, 0, sizeof(pinOutputValue));
+    extendedTelemetryEnabled = 0;
 
     CreateService(0xf005);
 
@@ -58,14 +59,18 @@ void DogoblockScratchService::notifySensorPacket(const uint8_t *data, int len) {
     if (len < 0) return;
     memset(sensorPacket, 0, sizeof(sensorPacket));
     memcpy(sensorPacket, data, len);
-    setChrValue(mbbs_cIdxRX, sensorPacket, sizeof(sensorPacket));
-    notifyChrValue(mbbs_cIdxRX, sensorPacket, sizeof(sensorPacket));
+    setChrValue(mbbs_cIdxRX, sensorPacket, len);
+    notifyChrValue(mbbs_cIdxRX, sensorPacket, len);
 }
 
 int DogoblockScratchService::getPinOutputValue(int pin) {
     if (pin < 0 || pin > 2) return -1;
     if (!pinOutputEnabled[pin]) return -1;
     return pinOutputValue[pin] ? 1 : 0;
+}
+
+int DogoblockScratchService::getExtendedTelemetryEnabled() {
+    return extendedTelemetryEnabled ? 1 : 0;
 }
 
 void DogoblockScratchService::onDataWritten(const microbit_ble_evt_write_t *params) {
@@ -90,6 +95,12 @@ void DogoblockScratchService::handleCommand(const uint8_t *data, int len) {
         case 0x82:
             handleDisplayLed(payload, payloadLength);
             break;
+        case 0x83:
+            handlePwmWrite(payload, payloadLength);
+            break;
+        case 0x84:
+            handleExtendedTelemetry(payload, payloadLength);
+            break;
         default:
             break;
     }
@@ -108,6 +119,30 @@ void DogoblockScratchService::handlePinWrite(const uint8_t *data, int len) {
     pinOutputEnabled[data[0]] = 1;
     pinOutputValue[data[0]] = data[1] ? 1 : 0;
     pin->setDigitalValue(pinOutputValue[data[0]]);
+}
+
+void DogoblockScratchService::handlePwmWrite(const uint8_t *data, int len) {
+    if (data == NULL || len < 3) return;
+    if (data[0] > 2) return;
+
+    int value = ((int)data[1] << 8) | data[2];
+    if (value < 0) value = 0;
+    if (value > 1023) value = 1023;
+
+    Pin *pin = NULL;
+    if (data[0] == 0) pin = &uBit.io.P0;
+    if (data[0] == 1) pin = &uBit.io.P1;
+    if (data[0] == 2) pin = &uBit.io.P2;
+    if (pin == NULL) return;
+
+    pinOutputEnabled[data[0]] = 1;
+    pinOutputValue[data[0]] = value > 0 ? 1 : 0;
+    pin->setAnalogValue(value);
+}
+
+void DogoblockScratchService::handleExtendedTelemetry(const uint8_t *data, int len) {
+    if (data == NULL || len < 1) return;
+    extendedTelemetryEnabled = data[0] ? 1 : 0;
 }
 
 void DogoblockScratchService::handleDisplayText(const uint8_t *data, int len) {
@@ -149,6 +184,7 @@ DogoblockScratchService::DogoblockScratchService(BLEDevice &_ble) :
     memset(commandBuffer, 0, sizeof(commandBuffer));
     memset(pinOutputEnabled, 0, sizeof(pinOutputEnabled));
     memset(pinOutputValue, 0, sizeof(pinOutputValue));
+    extendedTelemetryEnabled = 0;
 
     GattCharacteristic rxCharacteristic(
         DogoblockRxCharacteristicUUID,
@@ -184,14 +220,18 @@ void DogoblockScratchService::notifySensorPacket(const uint8_t *data, int len) {
     if (len < 0) return;
     memset(sensorPacket, 0, sizeof(sensorPacket));
     memcpy(sensorPacket, data, len);
-    ble.gattServer().write(rxCharacteristicHandle, sensorPacket, sizeof(sensorPacket));
-    ble.gattServer().notify(rxCharacteristicHandle, sensorPacket, sizeof(sensorPacket));
+    ble.gattServer().write(rxCharacteristicHandle, sensorPacket, len);
+    ble.gattServer().notify(rxCharacteristicHandle, sensorPacket, len);
 }
 
 int DogoblockScratchService::getPinOutputValue(int pin) {
     if (pin < 0 || pin > 2) return -1;
     if (!pinOutputEnabled[pin]) return -1;
     return pinOutputValue[pin] ? 1 : 0;
+}
+
+int DogoblockScratchService::getExtendedTelemetryEnabled() {
+    return extendedTelemetryEnabled ? 1 : 0;
 }
 
 void DogoblockScratchService::onDataWritten(const GattWriteCallbackParams *params) {
@@ -216,6 +256,12 @@ void DogoblockScratchService::handleCommand(const uint8_t *data, int len) {
         case 0x82:
             handleDisplayLed(payload, payloadLength);
             break;
+        case 0x83:
+            handlePwmWrite(payload, payloadLength);
+            break;
+        case 0x84:
+            handleExtendedTelemetry(payload, payloadLength);
+            break;
         default:
             break;
     }
@@ -234,6 +280,30 @@ void DogoblockScratchService::handlePinWrite(const uint8_t *data, int len) {
     pinOutputEnabled[data[0]] = 1;
     pinOutputValue[data[0]] = data[1] ? 1 : 0;
     pin->setDigitalValue(pinOutputValue[data[0]]);
+}
+
+void DogoblockScratchService::handlePwmWrite(const uint8_t *data, int len) {
+    if (data == NULL || len < 3) return;
+    if (data[0] > 2) return;
+
+    int value = ((int)data[1] << 8) | data[2];
+    if (value < 0) value = 0;
+    if (value > 1023) value = 1023;
+
+    MicroBitPin *pin = NULL;
+    if (data[0] == 0) pin = &uBit.io.P0;
+    if (data[0] == 1) pin = &uBit.io.P1;
+    if (data[0] == 2) pin = &uBit.io.P2;
+    if (pin == NULL) return;
+
+    pinOutputEnabled[data[0]] = 1;
+    pinOutputValue[data[0]] = value > 0 ? 1 : 0;
+    pin->setAnalogValue(value);
+}
+
+void DogoblockScratchService::handleExtendedTelemetry(const uint8_t *data, int len) {
+    if (data == NULL || len < 1) return;
+    extendedTelemetryEnabled = data[0] ? 1 : 0;
 }
 
 void DogoblockScratchService::handleDisplayText(const uint8_t *data, int len) {
@@ -291,5 +361,12 @@ namespace dogoblockble {
         startService();
         if (service == NULL) return -1;
         return service->getPinOutputValue(pin);
+    }
+
+    //%
+    int getExtendedTelemetryEnabled() {
+        startService();
+        if (service == NULL) return 0;
+        return service->getExtendedTelemetryEnabled();
     }
 }
