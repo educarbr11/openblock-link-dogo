@@ -1,6 +1,7 @@
 const {SerialPort} = require('serialport');
 const ansi = require('ansi-string');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const Session = require('./session');
@@ -209,7 +210,10 @@ class SerialportSession extends Session {
                     port.set({rts: rts, dtr: dtr}, setErr => {
                         if (setErr) {
                             if (isUnsupportedControlSignalError(setErr)) {
-                                console.warn(`OpenBlock Link Warning: serial control signals are not supported on ${peripheral.path}: ${setErr.message || setErr}`);
+                                console.warn(
+                                    'OpenBlock Link Warning: serial control signals are not supported on ' +
+                                    `${peripheral.path}: ${setErr.message || setErr}`
+                                );
                                 return finishConnection();
                             }
                             if (isConnectAfterUpload === true) {
@@ -259,7 +263,10 @@ class SerialportSession extends Session {
                 this.peripheral.set({rts: rts, dtr: dtr}, setErr => {
                     if (setErr) {
                         if (isUnsupportedControlSignalError(setErr)) {
-                            console.warn(`OpenBlock Link Warning: serial control signals are not supported after baudrate update: ${setErr.message || setErr}`);
+                            console.warn(
+                                'OpenBlock Link Warning: serial control signals are not supported after ' +
+                                `baudrate update: ${setErr.message || setErr}`
+                            );
                             return resolve();
                         }
                         this.sendRemoteRequest('peripheralUnplug', null);
@@ -341,13 +348,17 @@ class SerialportSession extends Session {
                     throw new Error('Unidade MICROBIT nao encontrada. Conecte o micro:bit por USB e tente novamente.');
                 }
                 const fileName = uploadOptions.fileName || 'dogoblock-microbit-program.hex';
-                const safeFileName = path.basename(fileName).replace(/[^a-z0-9_.-]/gi, '_') || 'dogoblock-microbit-program.hex';
+                const safeFileName = path.basename(fileName).replace(/[^a-z0-9_.-]/gi, '_') ||
+                    'dogoblock-microbit-program.hex';
                 const targetPath = path.join(volume, safeFileName);
                 this.sendstd(`${ansi.clear}Copiando programa MicroPython para ${volume}\n`);
                 this._clearMicrobitFailFile(volume);
                 await this._writeHexToMicrobitVolume(code, targetPath);
                 await this._verifyMicrobitTransfer(volume);
-                this.sendstd(`${ansi.clear}Programa copiado. Aguarde o micro:bit reiniciar. Isso pode levar alguns segundos antes do codigo comecar a executar.\n`);
+                this.sendstd(
+                    `${ansi.clear}Programa copiado. Aguarde o micro:bit reiniciar. ` +
+                    'Isso pode levar alguns segundos antes do codigo comecar a executar.\n'
+                );
                 this.sendRemoteRequest('uploadSuccess', {aborted: false});
             } catch (err) {
                 this.sendRemoteRequest('uploadError', {
@@ -359,7 +370,7 @@ class SerialportSession extends Session {
 
         if (!this.peripheralParams || !this.peripheral) {
             this.sendRemoteRequest('uploadError', {
-                message: ansi.red + 'Nenhuma placa conectada para envio serial.'
+                message: `${ansi.red}Nenhuma placa conectada para envio serial.`
             });
             return;
         }
@@ -376,7 +387,10 @@ class SerialportSession extends Session {
                 if (uploadOptions && uploadOptions.artifactType === 'compiledArtifact') {
                     const artifactDir = path.join(this.userDataPath, 'arduino', 'artifacts');
                     fs.mkdirSync(artifactDir, {recursive: true});
-                    const artifactPath = path.join(artifactDir, `${Date.now()}-${config.fqbn.replace(/[^a-z0-9]/gi, '_')}.hex`);
+                    const artifactPath = path.join(
+                        artifactDir,
+                        `${Date.now()}-${config.fqbn.replace(/[^a-z0-9]/gi, '_')}.hex`
+                    );
                     fs.writeFileSync(artifactPath, code);
 
                     try {
@@ -449,7 +463,6 @@ class SerialportSession extends Session {
     }
 
     _candidateMicrobitVolumes () {
-        const os = require('os');
         const user = os.userInfo().username;
         const candidates = [
             '/Volumes/MICROBIT',
@@ -517,7 +530,10 @@ class SerialportSession extends Session {
                     // Ignore partial files that DAPLink already consumed.
                 }
                 if (attempt < MICROBIT_HEX_WRITE_RETRIES) {
-                    this.sendstd(`${ansi.yellow_dark}Falha temporaria ao copiar para o micro:bit. Tentando novamente...\n`);
+                    this.sendstd(
+                        `${ansi.yellow_dark}Falha temporaria ao copiar para o micro:bit. ` +
+                        'Tentando novamente...\n'
+                    );
                     await wait(MICROBIT_HEX_WRITE_RETRY_DELAY_MS);
                 }
             }
