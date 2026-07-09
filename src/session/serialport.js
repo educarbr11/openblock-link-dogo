@@ -9,6 +9,14 @@ const Microbit = require('../upload/microbit');
 const usbId = require('../lib/usb-id');
 
 const PERIPHERAL_UNPLUG_CHECK_INTERVAL = 100;
+const MICROBIT_REALTIME_FIRMWARE_V2 = 'dogoblock-microbit-realtime-v2.hex';
+const MICROBIT_HEX_WRITE_CHUNK_SIZE = 4096;
+const MICROBIT_HEX_WRITE_RETRIES = 2;
+const MICROBIT_HEX_WRITE_RETRY_DELAY_MS = 1200;
+const MICROBIT_HEX_WRITE_CHUNK_DELAY_MS = 8;
+const MICROBIT_TRANSFER_VERIFY_DELAY_MS = 6000;
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const isUnsupportedControlSignalError = err => {
     if (!err) return false;
@@ -325,6 +333,37 @@ class SerialportSession extends Session {
         const {message, config, encoding, uploadOptions} = params;
         const code = new Buffer.from(message, encoding).toString();
 
+        if (uploadOptions && uploadOptions.artifactType === 'microbitHex') {
+            try {
+                this.sendRemoteRequest('setUploadAbortEnabled', false);
+                const volume = this._findMicrobitVolume();
+                if (!volume) {
+                    throw new Error('Unidade MICROBIT nao encontrada. Conecte o micro:bit por USB e tente novamente.');
+                }
+                const fileName = uploadOptions.fileName || 'dogoblock-microbit-program.hex';
+                const safeFileName = path.basename(fileName).replace(/[^a-z0-9_.-]/gi, '_') || 'dogoblock-microbit-program.hex';
+                const targetPath = path.join(volume, safeFileName);
+                this.sendstd(`${ansi.clear}Copiando programa MicroPython para ${volume}\n`);
+                this._clearMicrobitFailFile(volume);
+                await this._writeHexToMicrobitVolume(code, targetPath);
+                await this._verifyMicrobitTransfer(volume);
+                this.sendstd(`${ansi.clear}Programa copiado. Aguarde o micro:bit reiniciar. Isso pode levar alguns segundos antes do codigo comecar a executar.\n`);
+                this.sendRemoteRequest('uploadSuccess', {aborted: false});
+            } catch (err) {
+                this.sendRemoteRequest('uploadError', {
+                    message: ansi.red + err.message
+                });
+            }
+            return;
+        }
+
+        if (!this.peripheralParams || !this.peripheral) {
+            this.sendRemoteRequest('uploadError', {
+                message: ansi.red + 'Nenhuma placa conectada para envio serial.'
+            });
+            return;
+        }
+
         const {baudRate} = this.peripheralParams.peripheralConfig.config;
 
         switch (config.type) {
@@ -404,6 +443,123 @@ class SerialportSession extends Session {
         this.tool = null;
     }
 
+    _findMicrobitVolume () {
+        const candidates = this._candidateMicrobitVolumes();
+        return candidates.find(candidate => this._isMicrobitVolume(candidate));
+    }
+
+    _candidateMicrobitVolumes () {
+        const os = require('os');
+        const user = os.userInfo().username;
+        const candidates = [
+            '/Volumes/MICROBIT',
+            path.join('/media', user, 'MICROBIT'),
+            path.join('/run/media', user, 'MICROBIT'),
+            '/mnt/MICROBIT',
+            ...this._mountedLinuxMicrobitVolumes('/media'),
+            ...this._mountedLinuxMicrobitVolumes('/run/media')
+        ];
+
+        if (process.platform === 'win32') {
+            for (let code = 65; code <= 90; code++) {
+                candidates.push(`${String.fromCharCode(code)}:\\`);
+            }
+        }
+
+        return candidates.filter((item, index) => item && candidates.indexOf(item) === index);
+    }
+
+    _mountedLinuxMicrobitVolumes (basePath) {
+        if (!fs.existsSync(basePath)) {
+            return [];
+        }
+        return fs.readdirSync(basePath)
+            .reduce((result, entry) => {
+                const userPath = path.join(basePath, entry);
+                try {
+                    const stat = fs.statSync(userPath);
+                    if (stat.isDirectory()) {
+                        result.push(path.join(userPath, 'MICROBIT'));
+                    }
+                } catch (err) {
+                    // Ignore mount points that disappear while scanning.
+                }
+                return result;
+            }, []);
+    }
+
+    _isMicrobitVolume (candidate) {
+        if (!candidate || !fs.existsSync(candidate)) {
+            return false;
+        }
+        return fs.existsSync(path.join(candidate, 'DETAILS.TXT')) ||
+            fs.existsSync(path.join(candidate, 'MICROBIT.HTM'));
+    }
+
+    async _copyHexToMicrobitVolume (sourcePath, targetPath) {
+        const data = fs.readFileSync(sourcePath);
+        await this._writeHexToMicrobitVolume(data, targetPath);
+    }
+
+    async _writeHexToMicrobitVolume (hexData, targetPath) {
+        const data = Buffer.isBuffer(hexData) ? hexData : Buffer.from(hexData);
+        let lastError = null;
+
+        for (let attempt = 0; attempt <= MICROBIT_HEX_WRITE_RETRIES; attempt++) {
+            try {
+                await this._writeHexToMicrobitVolumeOnce(data, targetPath);
+                return;
+            } catch (err) {
+                lastError = err;
+                try {
+                    fs.rmSync(targetPath, {force: true});
+                } catch (removeErr) {
+                    // Ignore partial files that DAPLink already consumed.
+                }
+                if (attempt < MICROBIT_HEX_WRITE_RETRIES) {
+                    this.sendstd(`${ansi.yellow_dark}Falha temporaria ao copiar para o micro:bit. Tentando novamente...\n`);
+                    await wait(MICROBIT_HEX_WRITE_RETRY_DELAY_MS);
+                }
+            }
+        }
+
+        throw lastError;
+    }
+
+    async _writeHexToMicrobitVolumeOnce (data, targetPath) {
+        const fd = fs.openSync(targetPath, 'w');
+        try {
+            for (let offset = 0; offset < data.length; offset += MICROBIT_HEX_WRITE_CHUNK_SIZE) {
+                const chunk = data.slice(offset, Math.min(offset + MICROBIT_HEX_WRITE_CHUNK_SIZE, data.length));
+                fs.writeSync(fd, chunk, 0, chunk.length);
+                if (offset % (MICROBIT_HEX_WRITE_CHUNK_SIZE * 16) === 0) {
+                    fs.fsyncSync(fd);
+                }
+                await wait(MICROBIT_HEX_WRITE_CHUNK_DELAY_MS);
+            }
+            fs.fsyncSync(fd);
+        } finally {
+            fs.closeSync(fd);
+        }
+    }
+
+    _clearMicrobitFailFile (volume) {
+        try {
+            fs.rmSync(path.join(volume, 'FAIL.TXT'), {force: true});
+        } catch (err) {
+            // Ignore stale DAPLink status files that cannot be removed.
+        }
+    }
+
+    async _verifyMicrobitTransfer (volume) {
+        await wait(MICROBIT_TRANSFER_VERIFY_DELAY_MS);
+        const failPath = path.join(volume, 'FAIL.TXT');
+        if (fs.existsSync(failPath)) {
+            const message = fs.readFileSync(failPath, 'utf8').trim();
+            throw new Error(message || 'Falha ao transferir arquivo para o micro:bit.');
+        }
+    }
+
     async uploadFirmware (params) {
         switch (params.type) {
         case 'arduino':
@@ -424,32 +580,51 @@ class SerialportSession extends Session {
             }
             break;
         case 'microbit': {
-            const {baudRate} = this.peripheralParams.peripheralConfig.config;
-            this.tool = new Microbit(this.peripheral.path, params, this.userDataPath,
-                this.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
             try {
-                this.sendRemoteRequest('setUploadAbortEnabled', true);
-                this.sendstd(`${ansi.clear}Disconnect serial port\n`);
-                await this.disconnect();
-                this.sendstd(`${ansi.clear}Disconnected successfully, flash program starting...\n`);
-                const flashExitCode = await this.tool.flashRealtimeFirmware();
-                await this.connect(this.peripheralParams, true);
-                await this.updateBaudrate({baudRate: 115200});
-                this.sendstd(`${ansi.clear}Reset device\n`);
-                await this.write({message: '04', encoding: 'hex'});
-                await this.updateBaudrate({baudRate: baudRate});
-                this.sendRemoteRequest('uploadSuccess', {aborted: flashExitCode === 'Aborted'});
+                this.sendRemoteRequest('setUploadAbortEnabled', false);
+                const volume = this._findMicrobitVolume();
+                if (!volume) {
+                    throw new Error('Unidade MICROBIT nao encontrada. Conecte o micro:bit por USB e tente novamente.');
+                }
+                const firmwarePath = this._findMicrobitRealtimeFirmware();
+                if (!firmwarePath) {
+                    throw new Error('Firmware dogoblock-microbit-realtime-v2.hex nao encontrado no DoGoBlock Link.');
+                }
+                const targetPath = path.join(volume, MICROBIT_REALTIME_FIRMWARE_V2);
+                this.sendstd(`${ansi.clear}Copiando firmware do modo palco para ${volume}\n`);
+                this._clearMicrobitFailFile(volume);
+                await this._copyHexToMicrobitVolume(firmwarePath, targetPath);
+                await this._verifyMicrobitTransfer(volume);
+                this.sendstd(`${ansi.clear}Firmware do modo palco copiado. Aguarde o micro:bit reiniciar.\n`);
+                this.sendRemoteRequest('uploadSuccess', {aborted: false});
             } catch (err) {
                 this.sendRemoteRequest('uploadError', {
                     message: ansi.red + err.message
                 });
-                this.sendRemoteRequest('peripheralUnplug', null);
             }
             break;
         }
         }
 
         this.tool = null;
+    }
+
+    _findMicrobitRealtimeFirmware () {
+        const candidates = [
+            process.env.DOGOBLOCK_MICROBIT_REALTIME_HEX_V2,
+            process.env.DOGOBLOCK_MICROBIT_REALTIME_HEX,
+            process.resourcesPath && path.join(
+                process.resourcesPath,
+                'firmwares',
+                'microbit',
+                MICROBIT_REALTIME_FIRMWARE_V2
+            ),
+            path.join(process.cwd(), 'firmwares', 'microbit', MICROBIT_REALTIME_FIRMWARE_V2),
+            path.resolve(__dirname, '..', '..', 'firmwares', 'microbit', MICROBIT_REALTIME_FIRMWARE_V2),
+            path.resolve(__dirname, '..', '..', '..', '..', 'firmwares', 'microbit', MICROBIT_REALTIME_FIRMWARE_V2)
+        ].filter(Boolean);
+
+        return candidates.find(candidate => fs.existsSync(candidate));
     }
 
     async abortUpload () {

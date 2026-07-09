@@ -11,5 +11,6 @@ firmwares/*
 firmwares/microbit/*
 !firmwares/microbit/dogoblock-microbit-ble.hex
 !firmwares/microbit/dogoblock-microbit-ble-v2.hex
+!firmwares/microbit/dogoblock-microbit-realtime-v2.hex
 tmp/
 dist/
