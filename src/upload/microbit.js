@@ -16,6 +16,7 @@ from microbit import *
 uart.init(baudrate=115200)
 
 VERSION = 'microbit-realtime-v2'
+OUTPUT_PINS = {}
 
 PINS = {
     '0': pin0,
@@ -76,6 +77,46 @@ def _safe_touch(pin):
         return 0
 
 
+def _poll_touch(name, pin):
+    if OUTPUT_PINS.get(name, 0) == 1:
+        return 0
+    return _safe_touch(pin)
+
+
+def _safe_logo():
+    try:
+        return 1 if pin_logo.is_touched() else 0
+    except Exception:
+        return 0
+
+
+def _safe_sound_level():
+    try:
+        return microphone.sound_level()
+    except Exception:
+        return 0
+
+
+def _safe_sound_event():
+    try:
+        if microphone.was_event(SoundEvent.LOUD):
+            return 'loud'
+        if microphone.was_event(SoundEvent.QUIET):
+            return 'quiet'
+    except Exception:
+        pass
+    return ''
+
+
+def _set_sound_threshold(name, value):
+    try:
+        event = SoundEvent.QUIET if name == 'QUIET' else SoundEvent.LOUD
+        microphone.set_threshold(event, _clamp(value, 0, 255))
+        _ok(1)
+    except Exception:
+        _err('sound')
+
+
 def _gesture_name():
     try:
         return accelerometer.current_gesture().replace(' ', '')
@@ -97,25 +138,36 @@ def _handle(line):
     elif cmd == 'DREAD' and len(parts) == 2:
         pin = _pin(parts[1])
         if pin is not None:
+            OUTPUT_PINS[parts[1]] = 0
             _ok(pin.read_digital())
     elif cmd == 'AREAD' and len(parts) == 2:
         pin = _pin(parts[1])
         if pin is not None:
+            OUTPUT_PINS[parts[1]] = 0
             _ok(pin.read_analog())
     elif cmd == 'DWRITE' and len(parts) == 3:
         pin = _pin(parts[1])
         if pin is not None:
+            OUTPUT_PINS[parts[1]] = 1
             pin.write_digital(_clamp(parts[2], 0, 1))
             _ok(1)
     elif cmd == 'PWM' and len(parts) == 3:
         pin = _pin(parts[1])
         if pin is not None:
+            OUTPUT_PINS[parts[1]] = 1
             pin.write_analog(_clamp(parts[2], 0, 1023))
             _ok(1)
     elif cmd == 'TOUCH' and len(parts) == 2:
         pin = _pin(parts[1])
         if pin is not None:
+            OUTPUT_PINS[parts[1]] = 0
             _ok(_safe_touch(pin))
+    elif cmd == 'LOGO':
+        _ok(_safe_logo())
+    elif cmd == 'SOUND':
+        _ok(_safe_sound_level())
+    elif cmd == 'SOUNDTHRESH' and len(parts) == 3:
+        _set_sound_threshold(parts[1].upper(), parts[2])
     elif cmd == 'BTN' and len(parts) == 2:
         key = parts[1].upper()
         if key == 'A':
@@ -128,10 +180,15 @@ def _handle(line):
         a = _safe_button(button_a)
         b = _safe_button(button_b)
         ab = 1 if a and b else 0
-        t0 = _safe_touch(pin0)
-        t1 = _safe_touch(pin1)
-        t2 = _safe_touch(pin2)
-        _ok('{},{},{},{},{},{},{}'.format(a, b, ab, t0, t1, t2, _gesture_name()))
+        t0 = _poll_touch('0', pin0)
+        t1 = _poll_touch('1', pin1)
+        t2 = _poll_touch('2', pin2)
+        logo = _safe_logo()
+        sound = _safe_sound_level()
+        sound_event = _safe_sound_event()
+        _ok('{},{},{},{},{},{},{},{},{},{}'.format(
+            a, b, ab, t0, t1, t2, _gesture_name(), logo, sound, sound_event
+        ))
     elif cmd == 'GEST' and len(parts) == 2:
         _ok(1 if _gesture_name() == parts[1].lower() else 0)
     elif cmd == 'ACC' and len(parts) == 2:
