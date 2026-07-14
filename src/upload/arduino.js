@@ -35,7 +35,9 @@ class Arduino {
         this._configFilePath = path.join(this._userDataPath, 'arduino/arduino-cli.yaml');
         this._projectFilePath = path.join(this._userDataPath, 'arduino', projectPathName);
 
-        this._arduinoCliPath = path.join(this._arduinoPath, 'arduino-cli');
+        const arduinoCliExecutable = os.platform() === 'win32' ? 'arduino-cli.exe' : 'arduino-cli';
+        this._arduinoCliPath = path.join(this._arduinoPath, arduinoCliExecutable);
+        this._arduinoCliInitError = null;
 
         this._codeFolderPath = path.join(this._projectFilePath, 'code');
         this._codeFilePath = path.join(this._codeFolderPath, 'code.ino');
@@ -43,37 +45,70 @@ class Arduino {
         this._buildCachePath = path.join(this._projectFilePath, 'buildCache');
 
         if (fs.existsSync(this._arduinoCliPath)) {
-            this.initArduinoCli();
+            try {
+                this.initArduinoCli();
+            } catch (err) {
+                this._arduinoCliInitError = err;
+                this._sendstd(`${ansi.red}Arduino CLI initialization failed: ${err.message}\n`);
+            }
+        } else {
+            this._arduinoCliInitError = new Error(`Arduino CLI not found at ${this._arduinoCliPath}`);
         }
     }
 
-    initArduinoCli () {
-        // try to init the arduino cli config.
-        spawnSync(this._arduinoCliPath, ['config', 'init', '--dest-file', this._configFilePath]);
-
-        // if arduino cli config haven be init, set it to link arduino path.
-        const buf = spawnSync(this._arduinoCliPath, ['config', 'dump', '--config-file', this._configFilePath]);
-        try {
-            if (buf.error) {
-                throw buf.error;
-            }
-
-            const stdout = yaml.load(buf.stdout.toString());
-
-            if (stdout.directories.data !== this._arduinoPath) {
-                this._sendstd(`${ansi.yellow_dark}arduino cli config has not been initialized yet.\n`);
-                this._sendstd(`${ansi.green_dark}set the path to ${this._arduinoPath}.\n`);
-                spawnSync(this._arduinoCliPath, ['config', 'set', 'directories.data', this._arduinoPath,
-                    '--config-file', this._configFilePath]);
-                spawnSync(this._arduinoCliPath, ['config', 'set', 'directories.downloads',
-                    path.join(this._arduinoPath, 'staging'), '--config-file', this._configFilePath]);
-                spawnSync(this._arduinoCliPath, ['config', 'set', 'directories.user', this._arduinoPath,
-                    '--config-file', this._configFilePath]);
-            }
-        } catch (err) {
-            this._sendstd(`${ansi.red}arduino cli init error:${err.toString()}\n`);
+    _runArduinoCliSync (args, action) {
+        const result = spawnSync(this._arduinoCliPath, args, {encoding: 'utf8'});
+        if (result.error) {
+            throw result.error;
         }
+        if (result.status !== 0) {
+            const details = (result.stderr || result.stdout || '').trim();
+            throw new Error(`${action} failed${details ? `: ${details}` : ''}`);
+        }
+        return result;
+    }
 
+    initArduinoCli () {
+        fs.mkdirSync(path.dirname(this._configFilePath), {recursive: true});
+        fs.rmSync(this._configFilePath, {force: true});
+        this._runArduinoCliSync(
+            ['config', 'init', '--dest-file', this._configFilePath],
+            'Arduino CLI config initialization'
+        );
+
+        const directories = {
+            data: this._arduinoPath,
+            downloads: path.join(this._arduinoPath, 'staging'),
+            user: this._arduinoPath
+        };
+        Object.keys(directories).forEach(name => {
+            this._runArduinoCliSync([
+                'config', 'set', `directories.${name}`, directories[name],
+                '--config-file', this._configFilePath
+            ], `Arduino CLI directories.${name} configuration`);
+        });
+
+        const result = this._runArduinoCliSync(
+            ['config', 'dump', '--config-file', this._configFilePath],
+            'Arduino CLI config validation'
+        );
+        const config = yaml.load(result.stdout) || {};
+        Object.keys(directories).forEach(name => {
+            const configuredPath = config.directories && config.directories[name];
+            if (!configuredPath || path.resolve(configuredPath) !== path.resolve(directories[name])) {
+                throw new Error(`Arduino CLI directories.${name} points to an invalid path`);
+            }
+        });
+
+        const requiredCore = this._config.fqbn.split(':').slice(0, 2)
+            .join(':');
+        const installedCores = this._runArduinoCliSync(
+            ['core', 'list', '--config-file', this._configFilePath],
+            'Arduino CLI core validation'
+        ).stdout;
+        if (!installedCores.includes(requiredCore)) {
+            throw new Error(`Packaged Arduino core ${requiredCore} is not installed`);
+        }
     }
 
     abortUpload () {
@@ -82,6 +117,9 @@ class Arduino {
 
     build (code) {
         return new Promise((resolve, reject) => {
+            if (this._arduinoCliInitError) {
+                return reject(this._arduinoCliInitError);
+            }
             if (!fs.existsSync(this._codeFolderPath)) {
                 fs.mkdirSync(this._codeFolderPath, {recursive: true});
             }
@@ -285,6 +323,9 @@ class Arduino {
     }
 
     _flashWithFqbn (fqbn, firmwarePath = null) {
+        if (this._arduinoCliInitError) {
+            return Promise.reject(this._arduinoCliInitError);
+        }
         const args = [
             'upload',
             '--fqbn', fqbn,
