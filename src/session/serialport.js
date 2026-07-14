@@ -629,8 +629,22 @@ class SerialportSession extends Session {
         const candidates = [
             process.env.DOGOBLOCK_MICROBIT_REALTIME_HEX_V2,
             process.env.DOGOBLOCK_MICROBIT_REALTIME_HEX,
+            path.resolve(
+                this.toolsPath,
+                '..',
+                'firmwares',
+                'microbit',
+                MICROBIT_REALTIME_FIRMWARE_V2
+            ),
             process.resourcesPath && path.join(
                 process.resourcesPath,
+                'firmwares',
+                'microbit',
+                MICROBIT_REALTIME_FIRMWARE_V2
+            ),
+            process.resourcesPath && path.resolve(
+                process.resourcesPath,
+                '..',
                 'firmwares',
                 'microbit',
                 MICROBIT_REALTIME_FIRMWARE_V2
