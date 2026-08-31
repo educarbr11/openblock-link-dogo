@@ -28,11 +28,12 @@ const isUnsupportedControlSignalError = err => {
 };
 
 class SerialportSession extends Session {
-    constructor (socket, userDataPath, toolsPath) {
+    constructor (socket, userDataPath, toolsPath, toolsProvider = null) {
         super(socket);
 
         this.userDataPath = userDataPath;
         this.toolsPath = toolsPath;
+        this.toolsProvider = toolsProvider;
 
         this._type = 'serialport';
         this.peripheral = null;
@@ -44,6 +45,24 @@ class SerialportSession extends Session {
         this.isRead = false;
         this.isInDisconnect = false;
         this.tool = null;
+    }
+
+    _acquireTools (config) {
+        if (!this.toolsProvider || typeof this.toolsProvider.acquire !== 'function') {
+            return {
+                toolsPath: this.toolsPath,
+                release: () => {}
+            };
+        }
+
+        const lease = this.toolsProvider.acquire(config, this.toolsPath);
+        if (!lease || typeof lease.toolsPath !== 'string') {
+            throw new Error('The tools provider returned an invalid tools path.');
+        }
+        return {
+            toolsPath: lease.toolsPath,
+            release: typeof lease.release === 'function' ? lease.release : () => {}
+        };
     }
 
     async didReceiveCall (method, params, completion) {
@@ -378,11 +397,12 @@ class SerialportSession extends Session {
         const {baudRate} = this.peripheralParams.peripheralConfig.config;
 
         switch (config.type) {
-        case 'arduino':
-            this.tool = new Arduino(this.peripheral.path, config, this.userDataPath,
-                this.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
-
+        case 'arduino': {
+            let toolsLease = null;
             try {
+                toolsLease = this._acquireTools(config);
+                this.tool = new Arduino(this.peripheral.path, config, this.userDataPath,
+                    toolsLease.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
                 this.sendRemoteRequest('setUploadAbortEnabled', true);
                 if (uploadOptions && uploadOptions.artifactType === 'compiledArtifact') {
                     const artifactDir = path.join(this.userDataPath, 'arduino', 'artifacts');
@@ -429,8 +449,11 @@ class SerialportSession extends Session {
                 this.sendRemoteRequest('uploadError', {
                     message: ansi.red + err.message
                 });
+            } finally {
+                if (toolsLease) toolsLease.release();
             }
             break;
+        }
         case 'microbit':
             this.tool = new Microbit(this.peripheral.path, config, this.userDataPath,
                 this.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
@@ -578,10 +601,12 @@ class SerialportSession extends Session {
 
     async uploadFirmware (params) {
         switch (params.type) {
-        case 'arduino':
-            this.tool = new Arduino(this.peripheral.path, params, this.userDataPath,
-                this.toolsPath, this.sendstd.bind(this));
+        case 'arduino': {
+            let toolsLease = null;
             try {
+                toolsLease = this._acquireTools(params);
+                this.tool = new Arduino(this.peripheral.path, params, this.userDataPath,
+                    toolsLease.toolsPath, this.sendstd.bind(this));
                 this.sendRemoteRequest('setUploadAbortEnabled', true);
                 this.sendstd(`${ansi.clear}Disconnect serial port\n`);
                 await this.disconnect();
@@ -593,8 +618,11 @@ class SerialportSession extends Session {
                 this.sendRemoteRequest('uploadError', {
                     message: ansi.red + err.message
                 });
+            } finally {
+                if (toolsLease) toolsLease.release();
             }
             break;
+        }
         case 'microbit': {
             try {
                 this.sendRemoteRequest('setUploadAbortEnabled', false);

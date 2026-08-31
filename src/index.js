@@ -59,8 +59,10 @@ class OpenBlockLink extends Emitter{
      * Construct a OpenBlock link server object.
      * @param {string} userDataPath - the path to save user data.
      * @param {string} toolsPath - the path of build and flash tools.
+     * @param {object} options - optional runtime integrations.
+     * @param {object} options.toolsProvider - provider used to resolve optional tool packs.
      */
-    constructor (userDataPath, toolsPath) {
+    constructor (userDataPath, toolsPath, options = {}) {
         super();
 
         if (userDataPath) {
@@ -74,6 +76,7 @@ class OpenBlockLink extends Emitter{
         } else {
             this.toolsPath = DEFAULT_TOOLS_PATH;
         }
+        this.toolsProvider = options.toolsProvider || null;
 
         this._port = DEFAULT_PORT;
         this._host = DEFAULT_HOST;
@@ -85,7 +88,7 @@ class OpenBlockLink extends Emitter{
             const Session = ROUTERS[pathname];
             let session;
             if (Session) {
-                session = new Session(socket, this.userDataPath, this.toolsPath);
+                session = new Session(socket, this.userDataPath, this.toolsPath, this.toolsProvider);
                 console.info('new connection');
                 this.emit('new-connection');
             } else {
