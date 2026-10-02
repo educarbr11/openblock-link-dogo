@@ -65,6 +65,14 @@ class SerialportSession extends Session {
         };
     }
 
+    _getConnectedPeripheralInfo () {
+        if (!this.peripheral || !this.peripheral.path) return null;
+        return Object.assign(
+            {path: this.peripheral.path},
+            this.reportedPeripherals[this.peripheral.path] || {}
+        );
+    }
+
     async didReceiveCall (method, params, completion) {
         switch (method) {
         case 'discover':
@@ -401,8 +409,14 @@ class SerialportSession extends Session {
             let toolsLease = null;
             try {
                 toolsLease = this._acquireTools(config);
-                this.tool = new Arduino(this.peripheral.path, config, this.userDataPath,
-                    toolsLease.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
+                this.tool = new Arduino(
+                    this.peripheral.path,
+                    config,
+                    this.userDataPath,
+                    toolsLease.toolsPath,
+                    this.sendstd.bind(this),
+                    this._getConnectedPeripheralInfo()
+                );
                 this.sendRemoteRequest('setUploadAbortEnabled', true);
                 if (uploadOptions && uploadOptions.artifactType === 'compiledArtifact') {
                     const artifactDir = path.join(this.userDataPath, 'arduino', 'artifacts');
@@ -605,8 +619,14 @@ class SerialportSession extends Session {
             let toolsLease = null;
             try {
                 toolsLease = this._acquireTools(params);
-                this.tool = new Arduino(this.peripheral.path, params, this.userDataPath,
-                    toolsLease.toolsPath, this.sendstd.bind(this));
+                this.tool = new Arduino(
+                    this.peripheral.path,
+                    params,
+                    this.userDataPath,
+                    toolsLease.toolsPath,
+                    this.sendstd.bind(this),
+                    this._getConnectedPeripheralInfo()
+                );
                 this.sendRemoteRequest('setUploadAbortEnabled', true);
                 this.sendstd(`${ansi.clear}Disconnect serial port\n`);
                 await this.disconnect();

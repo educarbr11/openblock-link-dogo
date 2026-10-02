@@ -5,6 +5,8 @@ const ansi = require('ansi-string');
 const yaml = require('js-yaml');
 const os = require('os');
 
+const ArduinoUploadProfileStore = require('./arduino-upload-profile-store');
+
 const ARDUINO_CLI_STDOUT_GREEN_START = /Reading \||Writing \|/g;
 const ARDUINO_CLI_STDOUT_GREEN_END = /%/g;
 const ARDUINO_CLI_STDOUT_WHITE = /avrdude done/g;
@@ -12,9 +14,13 @@ const ARDUINO_CLI_STDOUT_RED_START = /can't open device|programmer is not respon
 const ARDUINO_CLI_STDERR_RED_IGNORE = /Executable segment sizes/g;
 
 const ABORT_STATE_CHECK_INTERVAL = 100;
+const AVRDUDE_MAX_NANO_SYNC_ATTEMPTS = 3;
+const AVRDUDE_SYNC_OUTPUT_BUFFER_SIZE = 2048;
+const ARDUINO_NANO_FQBN = 'arduino:avr:nano';
+const ARDUINO_NANO_OLD_BOOTLOADER_FQBN = 'arduino:avr:nano:cpu=atmega328old';
 
 class Arduino {
-    constructor (peripheralPath, config, userDataPath, toolsPath, sendstd) {
+    constructor (peripheralPath, config, userDataPath, toolsPath, sendstd, peripheralInfo = null) {
         this._peripheralPath = peripheralPath;
         this._config = config;
         this._userDataPath = userDataPath;
@@ -29,6 +35,12 @@ class Arduino {
         if (typeof this._config.fqbn === 'object') {
             this._config.fqbn = this._config.fqbn[os.platform()];
         }
+
+        this._peripheralInfo = Object.assign({path: peripheralPath}, peripheralInfo || {});
+        this._uploadProfileStore = new ArduinoUploadProfileStore(userDataPath);
+        this._savedUploadFqbn = this._isNanoFqbn(this._config.fqbn) ?
+            this._uploadProfileStore.getPreferredFqbn(this._peripheralInfo) : null;
+        this._reportedSavedUploadProfile = false;
 
         const projectPathName = `${this._config.fqbn.replace(/:/g, '_')}_project`.split(/_/).splice(0, 3)
             .join('_');
@@ -209,11 +221,54 @@ class Arduino {
     }
 
     _getUploadFqbns () {
-        const fallbackFqbns = Array.isArray(this._config.uploadFallbackFqbns) ?
+        const configuredFallbacks = Array.isArray(this._config.uploadFallbackFqbns) ?
             this._config.uploadFallbackFqbns : [];
-        return [this._config.fqbn].concat(fallbackFqbns).filter((fqbn, index, fqbns) =>
-            fqbn && fqbns.indexOf(fqbn) === index
+        const nanoFallbacks = [];
+
+        // Nano boards exist with two bootloaders. Keep this fallback in the uploader so
+        // older VM/Desktop bundles cannot accidentally remove hardware compatibility.
+        if (this._config.fqbn === ARDUINO_NANO_FQBN) {
+            nanoFallbacks.push(ARDUINO_NANO_OLD_BOOTLOADER_FQBN);
+        } else if (this._config.fqbn === ARDUINO_NANO_OLD_BOOTLOADER_FQBN) {
+            nanoFallbacks.push(ARDUINO_NANO_FQBN);
+        }
+
+        const uploadFqbns = [this._config.fqbn].concat(configuredFallbacks, nanoFallbacks).filter(
+            (fqbn, index, fqbns) =>
+                fqbn && fqbns.indexOf(fqbn) === index
         );
+        if (this._savedUploadFqbn && uploadFqbns.includes(this._savedUploadFqbn)) {
+            uploadFqbns.splice(uploadFqbns.indexOf(this._savedUploadFqbn), 1);
+            uploadFqbns.unshift(this._savedUploadFqbn);
+            if (!this._reportedSavedUploadProfile && typeof this._sendstd === 'function') {
+                this._reportedSavedUploadProfile = true;
+                this._sendstd(
+                    `${ansi.clear}Usando perfil salvo do Arduino Nano: ` +
+                    `${this._getNanoProfileName(this._savedUploadFqbn)}.\n`
+                );
+            }
+        }
+        return uploadFqbns;
+    }
+
+    _getNanoProfileName (fqbn) {
+        return fqbn === ARDUINO_NANO_OLD_BOOTLOADER_FQBN ?
+            'bootloader antigo (57600 baud)' : 'bootloader novo (115200 baud)';
+    }
+
+    _rememberSuccessfulUploadProfile (fqbn) {
+        if (!this._isNanoFqbn(fqbn) || !this._uploadProfileStore || !this._peripheralInfo) return;
+        if (this._savedUploadFqbn === fqbn) return;
+
+        if (this._uploadProfileStore.savePreferredFqbn(this._peripheralInfo, fqbn)) {
+            this._savedUploadFqbn = fqbn;
+            if (typeof this._sendstd === 'function') {
+                this._sendstd(
+                    `${ansi.green_dark}Perfil do Arduino Nano salvo para os proximos envios: ` +
+                    `${this._getNanoProfileName(fqbn)}.\n`
+                );
+            }
+        }
     }
 
     _getAvrdudePaths () {
@@ -260,6 +315,39 @@ class Arduino {
         return configs[fqbn];
     }
 
+    _isNanoFqbn (fqbn) {
+        return fqbn === ARDUINO_NANO_FQBN || fqbn === ARDUINO_NANO_OLD_BOOTLOADER_FQBN;
+    }
+
+    _formatAvrdudeSyncAttempts (fqbn, data) {
+        if (!this._isNanoFqbn(fqbn)) return data;
+        return data.replace(
+            /(stk500_getsync\(\) attempt \d+ of )\d+/g,
+            `$1${AVRDUDE_MAX_NANO_SYNC_ATTEMPTS}`
+        );
+    }
+
+    _hasReachedAvrdudeSyncAttemptLimit (fqbn, output) {
+        if (!this._isNanoFqbn(fqbn)) return false;
+        const attempts = output.match(/stk500_getsync\(\) attempt \d+ of \d+/g) || [];
+        return attempts.some(attempt => {
+            const match = attempt.match(/attempt (\d+) of/);
+            return match && Number(match[1]) >= AVRDUDE_MAX_NANO_SYNC_ATTEMPTS;
+        });
+    }
+
+    _terminateUploadProcess (uploadProcess) {
+        if (!uploadProcess || uploadProcess.killed) return;
+        if (os.platform() === 'win32') {
+            spawnSync('taskkill', ['/pid', uploadProcess.pid, '/f', '/t']);
+            return;
+        }
+
+        // arduino-cli starts avrdude as a child process, so stop the child before its parent.
+        spawnSync('pkill', ['-TERM', '-P', String(uploadProcess.pid)]);
+        uploadProcess.kill();
+    }
+
     _flashHexWithAvrdude (fqbn, firmwarePath) {
         const avrdude = this._getAvrdudePaths();
         const uploadConfig = this._getAvrdudeUploadConfig(fqbn);
@@ -276,10 +364,13 @@ class Arduino {
 
         return new Promise((resolve, reject) => {
             const avrdudeProcess = spawn(avrdude.bin, args);
+            const syncState = {output: '', stopped: false};
             this._sendstd(`${ansi.clear}${avrdude.bin} ${args.join(' ')}\n`);
 
             avrdudeProcess.stderr.on('data', buf => {
-                let data = buf.toString();
+                const rawData = buf.toString();
+                syncState.output = (syncState.output + rawData).slice(-AVRDUDE_SYNC_OUTPUT_BUFFER_SIZE);
+                let data = this._formatAvrdudeSyncAttempts(fqbn, rawData);
                 if (data.search(ARDUINO_CLI_STDOUT_GREEN_START) !== -1) {
                     data = this._insertStr(data, data.search(ARDUINO_CLI_STDOUT_GREEN_START), ansi.green_dark);
                 }
@@ -293,6 +384,14 @@ class Arduino {
                     data = this._insertStr(data, data.search(ARDUINO_CLI_STDOUT_RED_START), ansi.red);
                 }
                 this._sendstd(data);
+                if (!syncState.stopped && this._hasReachedAvrdudeSyncAttemptLimit(fqbn, syncState.output)) {
+                    syncState.stopped = true;
+                    this._sendstd(
+                        `${ansi.yellow_dark}Limite de ${AVRDUDE_MAX_NANO_SYNC_ATTEMPTS} tentativas atingido. ` +
+                        'Interrompendo este perfil do Arduino Nano...\n'
+                    );
+                    this._terminateUploadProcess(avrdudeProcess);
+                }
             });
 
             avrdudeProcess.stdout.on('data', buf => {
@@ -301,11 +400,7 @@ class Arduino {
 
             const listenAbortSignal = setInterval(() => {
                 if (this._abort) {
-                    if (os.platform() === 'win32') {
-                        spawnSync('taskkill', ['/pid', avrdudeProcess.pid, '/f', '/t']);
-                    } else {
-                        avrdudeProcess.kill();
-                    }
+                    this._terminateUploadProcess(avrdudeProcess);
                 }
             }, ABORT_STATE_CHECK_INTERVAL);
 
@@ -349,9 +444,12 @@ class Arduino {
 
         return new Promise((resolve, reject) => {
             const arduinoCli = spawn(this._arduinoCliPath, args);
+            const syncState = {output: '', stopped: false};
 
             arduinoCli.stderr.on('data', buf => {
-                let data = buf.toString();
+                const rawData = buf.toString();
+                syncState.output = (syncState.output + rawData).slice(-AVRDUDE_SYNC_OUTPUT_BUFFER_SIZE);
+                let data = this._formatAvrdudeSyncAttempts(fqbn, rawData);
 
                 // todo: Because the feacture of avrdude sends STD information intermittently.
                 // There should be a better way to handle these mesaage.
@@ -368,6 +466,14 @@ class Arduino {
                     data = this._insertStr(data, data.search(ARDUINO_CLI_STDOUT_RED_START), ansi.red);
                 }
                 this._sendstd(data);
+                if (!syncState.stopped && this._hasReachedAvrdudeSyncAttemptLimit(fqbn, syncState.output)) {
+                    syncState.stopped = true;
+                    this._sendstd(
+                        `${ansi.yellow_dark}Limite de ${AVRDUDE_MAX_NANO_SYNC_ATTEMPTS} tentativas atingido. ` +
+                        'Interrompendo este perfil do Arduino Nano...\n'
+                    );
+                    this._terminateUploadProcess(arduinoCli);
+                }
             });
 
             arduinoCli.stdout.on('data', buf => {
@@ -378,11 +484,7 @@ class Arduino {
 
             const listenAbortSignal = setInterval(() => {
                 if (this._abort) {
-                    if (os.platform() === 'win32') {
-                        spawnSync('taskkill', ['/pid', arduinoCli.pid, '/f', '/t']);
-                    } else {
-                        arduinoCli.kill();
-                    }
+                    this._terminateUploadProcess(arduinoCli);
                 }
             }, ABORT_STATE_CHECK_INTERVAL);
 
@@ -401,10 +503,14 @@ class Arduino {
                 case 1:
                     if (this._abort) {
                         // Wait for 100ms before returning to prevent the serial port from being released.
-                        wait(100).then(() => resolve('Aborted'));
-                    } else {
-                        return reject(new Error('avrdude failed to flash'));
+                        return wait(100).then(() => resolve('Aborted'));
                     }
+                    return reject(new Error('avrdude failed to flash'));
+                default:
+                    if (this._abort) {
+                        return resolve('Aborted');
+                    }
+                    return reject(new Error('avrdude failed to flash'));
                 }
             });
         });
@@ -417,11 +523,16 @@ class Arduino {
         for (let i = 0; i < fqbns.length; i++) {
             const fqbn = fqbns[i];
             if (i > 0) {
-                this._sendstd(`${ansi.yellow_dark}Upload failed. Trying alternate Arduino bootloader (${fqbn})...\n`);
+                this._sendstd(
+                    `${ansi.yellow_dark}Falha no perfil atual. ` +
+                    `Tentando o bootloader alternativo do Arduino Nano (${fqbn})...\n`
+                );
             }
 
             try {
-                return await this._flashWithFqbn(fqbn, firmwarePath);
+                const result = await this._flashWithFqbn(fqbn, firmwarePath);
+                if (result === 'Success') this._rememberSuccessfulUploadProfile(fqbn);
+                return result;
             } catch (err) {
                 lastError = err;
                 if (this._abort || i === fqbns.length - 1) {
@@ -440,11 +551,16 @@ class Arduino {
         for (let i = 0; i < fqbns.length; i++) {
             const fqbn = fqbns[i];
             if (i > 0) {
-                this._sendstd(`${ansi.yellow_dark}Upload failed. Trying alternate Arduino bootloader (${fqbn})...\n`);
+                this._sendstd(
+                    `${ansi.yellow_dark}Falha no perfil atual. ` +
+                    `Tentando o bootloader alternativo do Arduino Nano (${fqbn})...\n`
+                );
             }
 
             try {
-                return await this._flashHexWithAvrdude(fqbn, firmwarePath);
+                const result = await this._flashHexWithAvrdude(fqbn, firmwarePath);
+                if (result === 'Success') this._rememberSuccessfulUploadProfile(fqbn);
+                return result;
             } catch (err) {
                 lastError = err;
                 if (this._abort || i === fqbns.length - 1) {

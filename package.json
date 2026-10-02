@@ -13,7 +13,7 @@
     "docs": "jsdoc -c .jsdoc.json",
     "lint": "eslint ./src",
     "build:firmware:microbit-ble": "bash scripts/build-microbit-ble-firmware.sh",
-    "test": "node test/ble-session.test.js",
+    "test": "node test/ble-session.test.js && node test/arduino-upload-profile-store.test.js && node test/arduino-upload-profiles.test.js",
     "test:multi-server": "node test/start-multi-server.js --log-level=info"
   },
   "repository": {
