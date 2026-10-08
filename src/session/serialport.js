@@ -468,10 +468,12 @@ class SerialportSession extends Session {
             }
             break;
         }
-        case 'microbit':
-            this.tool = new Microbit(this.peripheral.path, config, this.userDataPath,
-                this.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
+        case 'microbit': {
+            let toolsLease = null;
             try {
+                toolsLease = this._acquireTools(config);
+                this.tool = new Microbit(this.peripheral.path, config, this.userDataPath,
+                    toolsLease.toolsPath, this.sendstd.bind(this), this.sendRemoteRequest.bind(this));
                 this.sendRemoteRequest('setUploadAbortEnabled', true);
                 await this.disconnect();
                 const exitCode = await this.tool.flash(code);
@@ -487,8 +489,11 @@ class SerialportSession extends Session {
                     message: ansi.red + err.message
                 });
                 this.sendRemoteRequest('peripheralUnplug', null);
+            } finally {
+                if (toolsLease) toolsLease.release();
             }
             break;
+        }
         }
 
         this.tool = null;
