@@ -216,6 +216,10 @@ class Arduino {
         });
     }
 
+    getBuildHexPath () {
+        return path.join(this._buildPath, `${path.basename(this._codeFilePath)}.hex`);
+    }
+
     _insertStr (soure, start, newStr) {
         return soure.slice(0, start) + newStr + soure.slice(start);
     }

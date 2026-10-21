@@ -48,7 +48,8 @@ const REOPEN_INTERVAL = 1000 * 1;
  */
 const ROUTERS = {
     '/openblock/serialport': require('./session/serialport'), // eslint-disable-line global-require
-    '/openblock/ble': require('./session/ble') // eslint-disable-line global-require
+    '/openblock/ble': require('./session/ble'), // eslint-disable-line global-require
+    '/openblock/compiler': require('./session/compiler') // eslint-disable-line global-require
 };
 
 /**
@@ -87,6 +88,11 @@ class OpenBlockLink extends Emitter{
             const {pathname} = url.parse(request.url);
             const Session = ROUTERS[pathname];
             let session;
+            const rejection = Session && Session.verifyRequest && Session.verifyRequest(request);
+            if (rejection) {
+                console.warn(clc.yellow(`Rejected ${pathname} connection: ${rejection}`));
+                return socket.close(1008, 'Connection not allowed');
+            }
             if (Session) {
                 session = new Session(socket, this.userDataPath, this.toolsPath, this.toolsProvider);
                 console.info('new connection');
