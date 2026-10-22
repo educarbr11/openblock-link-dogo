@@ -18,6 +18,8 @@ const AVRDUDE_MAX_NANO_SYNC_ATTEMPTS = 3;
 const AVRDUDE_SYNC_OUTPUT_BUFFER_SIZE = 2048;
 const ARDUINO_NANO_FQBN = 'arduino:avr:nano';
 const ARDUINO_NANO_OLD_BOOTLOADER_FQBN = 'arduino:avr:nano:cpu=atmega328old';
+// Present in the ChromeOS Linux container (Crostini), which holds ChromeOS integration tools.
+const IS_CHROMEOS_LINUX = fs.existsSync('/opt/google/cros-containers');
 
 class Arduino {
     constructor (peripheralPath, config, userDataPath, toolsPath, sendstd, peripheralInfo = null) {
@@ -50,15 +52,22 @@ class Arduino {
         const arduinoCliExecutable = os.platform() === 'win32' ? 'arduino-cli.exe' : 'arduino-cli';
         this._arduinoCliPath = path.join(this._arduinoPath, arduinoCliExecutable);
         this._arduinoCliInitError = null;
+        this._arduinoCliReady = false;
 
         this._codeFolderPath = path.join(this._projectFilePath, 'code');
         this._codeFilePath = path.join(this._codeFolderPath, 'code.ino');
         this._buildPath = path.join(this._projectFilePath, 'build');
         this._buildCachePath = path.join(this._projectFilePath, 'buildCache');
+    }
 
+    // arduino-cli is set up on first use: uploads of compiled artifacts only need avrdude, and
+    // the setup runs several blocking arduino-cli commands.
+    _ensureArduinoCli () {
+        if (this._arduinoCliReady || this._arduinoCliInitError) return this._arduinoCliInitError;
         if (fs.existsSync(this._arduinoCliPath)) {
             try {
                 this.initArduinoCli();
+                this._arduinoCliReady = true;
             } catch (err) {
                 this._arduinoCliInitError = err;
                 this._sendstd(`${ansi.red}Arduino CLI initialization failed: ${err.message}\n`);
@@ -66,6 +75,7 @@ class Arduino {
         } else {
             this._arduinoCliInitError = new Error(`Arduino CLI not found at ${this._arduinoCliPath}`);
         }
+        return this._arduinoCliInitError;
     }
 
     _runArduinoCliSync (args, action) {
@@ -129,8 +139,9 @@ class Arduino {
 
     build (code) {
         return new Promise((resolve, reject) => {
-            if (this._arduinoCliInitError) {
-                return reject(this._arduinoCliInitError);
+            const initError = this._ensureArduinoCli();
+            if (initError) {
+                return reject(initError);
             }
             if (!fs.existsSync(this._codeFolderPath)) {
                 fs.mkdirSync(this._codeFolderPath, {recursive: true});
@@ -365,6 +376,11 @@ class Arduino {
             '-D',
             `-Uflash:w:${firmwarePath}:i`
         ];
+        // In the ChromeOS Linux container the board is reached through USB forwarding to the VM,
+        // and avrdude's read-back verification fails on boards that were written correctly.
+        if (IS_CHROMEOS_LINUX) {
+            args.splice(args.length - 1, 0, '-V');
+        }
 
         return new Promise((resolve, reject) => {
             const avrdudeProcess = spawn(avrdude.bin, args);
@@ -422,8 +438,9 @@ class Arduino {
     }
 
     _flashWithFqbn (fqbn, firmwarePath = null) {
-        if (this._arduinoCliInitError) {
-            return Promise.reject(this._arduinoCliInitError);
+        const initError = this._ensureArduinoCli();
+        if (initError) {
+            return Promise.reject(initError);
         }
         const args = [
             'upload',

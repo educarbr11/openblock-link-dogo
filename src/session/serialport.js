@@ -8,6 +8,7 @@ const Session = require('./session');
 const Arduino = require('../upload/arduino');
 const Microbit = require('../upload/microbit');
 const usbId = require('../lib/usb-id');
+const {listSerialPorts} = require('../lib/serial-port-list');
 
 const PERIPHERAL_UNPLUG_CHECK_INTERVAL = 100;
 const MICROBIT_REALTIME_FIRMWARE_V2 = 'dogoblock-microbit-realtime-v2.hex';
@@ -131,7 +132,7 @@ class SerialportSession extends Session {
         this.reportedPeripherals = {};
 
         this.peripheralsScanorTimer = setInterval(() => {
-            SerialPort.list().then(peripheral => {
+            listSerialPorts(SerialPort).then(peripheral => {
                 this.onAdvertisementReceived(peripheral, filters);
             });
         }, 100);
