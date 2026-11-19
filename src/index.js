@@ -5,6 +5,7 @@ const Emitter = require('events');
 const path = require('path');
 const fetch = require('node-fetch');
 const clc = require('cli-color');
+const LanHub = require('./lan/hub');
 
 /**
  * Configuration the default user data path. Just for debug.
@@ -49,7 +50,8 @@ const REOPEN_INTERVAL = 1000 * 1;
 const ROUTERS = {
     '/openblock/serialport': require('./session/serialport'), // eslint-disable-line global-require
     '/openblock/ble': require('./session/ble'), // eslint-disable-line global-require
-    '/openblock/compiler': require('./session/compiler') // eslint-disable-line global-require
+    '/openblock/compiler': require('./session/compiler'), // eslint-disable-line global-require
+    '/openblock/lan': require('./session/lan') // eslint-disable-line global-require
 };
 
 /**
@@ -78,6 +80,7 @@ class OpenBlockLink extends Emitter{
             this.toolsPath = DEFAULT_TOOLS_PATH;
         }
         this.toolsProvider = options.toolsProvider || null;
+        this._lanHub = new LanHub(options.lan);
 
         this._port = DEFAULT_PORT;
         this._host = DEFAULT_HOST;
@@ -94,7 +97,7 @@ class OpenBlockLink extends Emitter{
                 return socket.close(1008, 'Connection not allowed');
             }
             if (Session) {
-                session = new Session(socket, this.userDataPath, this.toolsPath, this.toolsProvider);
+                session = new Session(socket, this.userDataPath, this.toolsPath, this.toolsProvider, this._lanHub);
                 console.info('new connection');
                 this.emit('new-connection');
             } else {
